@@ -6,6 +6,8 @@ from .parser import parse, StrikeEvent
 from .clustering import cluster_events, Cluster
 from .routes import build_route_graph, RouteEdge
 from .temporal import analyze_temporal_patterns, TemporalPattern
+from .logistics import analyze_logistics, RouteStats, ActivityPattern
+from .storage import save_events, load_events, event_count
 
 
 @dataclass
@@ -39,6 +41,8 @@ class PatternAnalyzer:
         self.labels: List[int] = []
         self.temporal: List[TemporalPattern] = []
         self.edges: dict = {}
+        self.route_stats: List[RouteStats] = []
+        self.activity: ActivityPattern = ActivityPattern()
 
     def load(self, text: str) -> "PatternAnalyzer":
         self.events = parse(text)
@@ -52,7 +56,29 @@ class PatternAnalyzer:
             self.clusters, self.labels, self.events, self.max_gap_hours
         )
         self.temporal = analyze_temporal_patterns(self.clusters)
+        self.route_stats, self.activity = analyze_logistics(
+            self.clusters, self.edges, self.events, self.labels
+        )
         return self
+
+    def ingest(self, text: str, source: Optional[str] = None) -> int:
+        """Parse text, save to DB, reload all events, refit. Returns newly added count."""
+        new_events = parse(text)
+        added = save_events(new_events, source=source)
+        self.events = load_events()
+        return added
+
+    def fit_from_db(self) -> "PatternAnalyzer":
+        """Load all accumulated events from DB and fit."""
+        self.events = load_events()
+        return self.fit()
+
+    def full_report(self, from_time: Optional[datetime] = None) -> str:
+        from .report import generate_report
+        if from_time is None:
+            from_time = datetime.utcnow()
+        predictions = self.predict(from_time)
+        return generate_report(self, self.route_stats, self.activity, predictions, from_time)
 
     def predict(self, from_time: Optional[datetime] = None) -> List[Prediction]:
         if from_time is None:
